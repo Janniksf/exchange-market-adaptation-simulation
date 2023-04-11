@@ -1,6 +1,7 @@
 
 from trader import Trader, CEX, DEX, crypto_list
 
+
 # Define the variables for the simulation
 num_iterations = 100
 

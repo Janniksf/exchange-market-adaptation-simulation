@@ -1,3 +1,6 @@
+###### Inactive ######
+
+
 import random
 
 # create a list of top 10 cryptocurrencies
