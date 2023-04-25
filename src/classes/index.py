@@ -21,60 +21,134 @@ class Wallet:
 
 
 class Trader:
-    def _init_(self, trader_id, wallets=[Wallet], lp=False):
+    def __init__(self, trader_id, wallets=[], lp=False):
         self.trader_id = trader_id
         self.wallets = wallets
         self.lp = lp
         # need to add preferences towards CEX or DEX
 
-
-class liquidityProvider(Trader):
-    def _init_(self, trader_id, wallets=[Wallet]):
-        super()._init_(trader_id, wallets, lp=True)
+    def __repr__(self):
+        return f"{self.trader_id}:"
 
 
-class liquidityPool:
-    def _init_(self, X_ticker, Y_ticker, X_amount, Y_amount, X_value, Y_value):
+class LiquidityProvider(Trader):
+    def __init__(self, trader_id, wallets=[]):
+        super().__init__(trader_id, wallets, lp=True)
+
+    def __repr__(self):
+        return f"{self.trader_id}:"
+
+
+class LiquidityPool:
+    def __init__(self, trader, X_ticker, Y_ticker, X_amount, Y_amount, fee=0.003):
         self.X_ticker = X_ticker
         self.Y_ticker = Y_ticker
         self.X_amount = X_amount
-        self.Y_amount = Y_amount
-        self.K_value = X_amount * Y_amount  # K_value is a constant
-        # When initalized, X_value is the market price of X_ticker or what the lp is willing to pay for X_ticker
-        self.X_value = X_value
-        # When initalized, Y_value is the market price of Y_ticker or what the lp is willing to pay for Y_ticker
-        self.Y_value = Y_value
-
-    def trade(self, trader, buy_ticker, sell_ticker, trade_amount):
-        # Find the current market price of the buy and sell tickers
-        if buy_ticker == self.X_ticker:
-            buy_price = self.X_value
-            sell_price = self.Y_value
-        else:
-            buy_price = self.Y_value
-            sell_price = self.X_value
-
-        # Determine the amount of buy and sell tickers the trader has in their wallet
+        # withdraw x_amount from trader wallet
         for wallet in trader.wallets:
-            if wallet.crypto_currency.ticker == buy_ticker:
-                buy_wallet = wallet
-            elif wallet.crypto_currency.ticker == sell_ticker:
-                sell_wallet = wallet
+            if wallet.crypto_currency.ticker == X_ticker:
+                wallet.amount -= X_amount
+        self.Y_amount = Y_amount
+        # withdraw y_amount from trader wallet
+        for wallet in trader.wallets:
+            if wallet.crypto_currency.ticker == Y_ticker:
+                wallet.amount -= Y_amount
+        self.K_value = X_amount * Y_amount  # K_value is a constant
+        # Could make it easier to calculate by using X_value = y_amount / x_amount
+        self.X_value = Y_amount/X_amount
+        # Could make it easier to calculate by using y_value = x_amount / y_amount
+        self.Y_value = X_amount/Y_amount
+        self.fee = fee  # fee is a constant, and will be a precentage of swap_inn_amount
+        self.fee_amount_X = 0
+        self.fee_amount_Y = 0
 
-        # Calculate the new amounts of buy and sell tickers in the liquidity pool after the trade
-        new_buy_amount = self.X_amount if buy_ticker == self.X_ticker else self.Y_amount
-        new_sell_amount = self.Y_amount if buy_ticker == self.X_ticker else self.X_amount
-        new_buy_amount += trade_amount
-        new_sell_amount = self.K_value / new_buy_amount
+    def trade(self, trader, swap_inn_ticker, inn_amount):
+        # Check if trader has enough of swap_inn_ticker
+        for wallet in trader.wallets:
+            if wallet.crypto_currency.ticker == swap_inn_ticker:
+                if wallet.amount < inn_amount:
+                    return False
 
-        # Calculate the new amounts of buy and sell tickers in the trader's wallet after the trade
-        new_buy_wallet_amount = buy_wallet.amount - trade_amount
-        new_sell_wallet_amount = sell_wallet.amount + \
-            (sell_wallet.crypto_currency.market_price * trade_amount / sell_price)
+        # Find fee amount
+        fee_amount = inn_amount * self.fee
 
-        # Update the liquidity pool and trader's wallet with the new amounts
-        if buy_ticker == self.X_ticker:
-            self.X_amount = new_buy_amount
-            self.Y_amount = new_sell_amount
-            buy_wallet.amount = new_buy_wallet_amount
-            sell_wallet.amount = new_sell_wallet_amount
+        # Find amount of swap_out_ticker
+        if swap_inn_ticker == self.X_ticker:
+            swap_out_ticker = self.Y_ticker
+            swap_out_amount = self.Y_amount - \
+                (self.K_value / (self.X_amount + inn_amount - fee_amount))
+        else:
+            swap_out_ticker = self.X_ticker
+            swap_out_amount = self.X_amount - (
+                self.K_value / (self.Y_amount + inn_amount - fee_amount))
+
+        # Update liquidity pool X and Y amounts
+        if swap_inn_ticker == self.X_ticker:
+            self.X_amount += inn_amount
+            self.Y_amount -= swap_out_amount
+
+        else:
+            self.X_amount -= swap_out_amount
+            self.Y_amount += inn_amount
+
+        # Update liquidity pool x and y values
+        self.X_value = self.Y_amount / self.X_amount
+        self.Y_value = self.X_amount / self.Y_amount
+
+        # Update liquidity pool k value
+        self.K_value = self.X_amount * self.Y_amount
+
+        # Update fee amounts
+        if swap_inn_ticker == self.X_ticker:
+            self.fee_amount_X += fee_amount
+        else:
+            self.fee_amount_Y += fee_amount
+
+        # Update trader wallet
+        for wallet in trader.wallets:
+            if wallet.crypto_currency.ticker == swap_inn_ticker:
+                wallet.amount -= inn_amount
+            elif wallet.crypto_currency.ticker == swap_out_ticker:
+                wallet.amount += swap_out_amount
+
+    # Function for lp to withdraw X and Y from liquidity pool
+    def withdraw(self, trader, percent):
+        # Check if trader is lp
+        if trader.lp == False:
+            return False
+
+        # Find amount to withdraw
+        withdraw_X_amount = self.X_amount * percent
+        withdraw_Y_amount = self.Y_amount * percent
+
+        # Update liquidity pool X and Y amounts
+        self.X_amount -= withdraw_X_amount
+        self.Y_amount -= withdraw_Y_amount
+
+        if percent == 1:
+            self.fee_amount_X = 0
+            self.fee_amount_Y = 0
+            # Update liquidity pool x and y values to 0
+            self.X_value = 0
+            self.Y_value = 0
+            self.K_value = 0
+
+        else:
+            self.fee_amount_X -= self.fee_amount_X * percent
+            self.fee_amount_Y -= self.fee_amount_Y * percent
+            # Update liquidity pool x and y values
+            self.X_value = self.Y_amount / self.X_amount
+            self.Y_value = self.X_amount / self.Y_amount
+
+            # Update liquidity pool k value
+            self.K_value = self.X_amount * self.Y_amount
+
+        # Update trader wallet
+        for wallet in trader.wallets:
+            if wallet.crypto_currency.ticker == self.X_ticker:
+                wallet.amount += withdraw_X_amount
+            elif wallet.crypto_currency.ticker == self.Y_ticker:
+                wallet.amount += withdraw_Y_amount
+
+    def __repr__(self):
+        return f"{self.X_ticker}/{self.Y_ticker}: {self.X_amount} {self.X_ticker} and {self.Y_amount} {self.Y_ticker}"
